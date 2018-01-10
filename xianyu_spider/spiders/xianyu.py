@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # coding:utf-8 
 import sys
+sys.path.append("/root/python_util")
+import Util as Util
 reload(sys)
 sys.setdefaultencoding('utf-8')
 import json
@@ -29,7 +31,6 @@ class XianyuSpider(scrapy.Spider):
     database_name = 'life'
     database_username = 'root'
     database_password = 'IWLX8IS12Rl'
-    sock = 'SCU15524T3b74cdf9889582dd05f0f6311c30daa95a02d41d5e091'
     keys_file_path = './../../keys'
 
     def read_local_file_keys(self):
@@ -50,7 +51,7 @@ class XianyuSpider(scrapy.Spider):
             res['filter']['price_min'] = lineList[1]
             res['filter']['price_max'] = lineList[2]
             res['filter']['ignore'] = lineList[3].split(',')
-            res['follower']=lineList[4] if len(lineList) >=5 else None
+            res['follower']=lineList[4].split(',') if len(lineList) >=5 else None
             finalRes.append(res);
         return finalRes;
 
@@ -58,6 +59,8 @@ class XianyuSpider(scrapy.Spider):
     def start_requests(self):
         #指定待抓取的连接池，可以从调度器中获取
         items = self.read_local_file_keys()
+        for i in items:
+            print i['keywords']
         for item in items:
                 for key in item['keywords']:
                     #拼接url
@@ -68,7 +71,9 @@ class XianyuSpider(scrapy.Spider):
                     yield scrapy.Request(url=url, callback=self.parse, meta=item)
     #抓取结果处理
     def parse(self, response):
-        print response
+        print '--------------------------------------------------------------------------'
+#        print json.dumps(response.meta).decode('unicode_escape')
+#        print response
         items = response.xpath(("//*[@id='J_ItemListsContainer']/div/div/div[2]/div[1]/a/img/@title")).extract()
         items = response.xpath("//*[@id='J_ItemListsContainer']/div")
         startTime = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))
@@ -97,19 +102,20 @@ class XianyuSpider(scrapy.Spider):
                 isHited = True
                 #查询是否存在
                 if not self.is_data_existed(result):
-                    isExisted = False
-        #            self.insert_data(result)
-                    self.push_wechat(result)
-                    #如果有follower的邮件地址就发邮件通知
-                    if response.meta['follower'] is not None:
-                        self.send_mail(result,response.meta['follower'])
-        #            print json.dumps(result,ensure_ascii=False,encoding="gb2312");
+                    isExisted = '\033[1;31mNew!\033[0m'
+                    hitedStr ='\033[1;31mHit!\033[0m'
+                    print "%s|%6s|%s|Exist:%5s|%8s|%s|%s|%s"%(startTime,result['keywords'],hitedStr,isExisted,result['price'],result['title'],result['address'],result['desc'])
+                    self.insert_data(result)
+                    self.push_alarm(result,response.meta['follower'])
+
                     yield result
             if isHited:
                 hitedStr ='\033[1;31mHit!\033[0m'
+                print "%s|%6s|%s|Exist:%5s|%8s|%s|%s|%s"%(startTime,result['keywords'],hitedStr,isExisted,result['price'],result['title'],result['address'],result['desc'])
+
             else:
                 hitedStr = 'Miss'
-            print "%s|%6s|%s|Exist:%5s|%8s|%s|%s|%s"%(startTime,result['keywords'],hitedStr,isExisted,result['price'],result['title'],result['address'],result['desc'])
+                print "%s|%6s|%s|Exist:%5s|%8s|%s|%s|%s"%(startTime,result['keywords'],hitedStr,isExisted,result['price'],result['title'],result['address'],result['desc'])
 
 
     #业务过滤器，执行如价格过滤等条件。 如果返回true说明数据有效，否则无效
@@ -136,41 +142,49 @@ class XianyuSpider(scrapy.Spider):
         m.update(strRes.encode(encoding='utf-8'))
 #    print tempResult,m.hexdigest()
         return m.hexdigest()
-
-    def push_wechat(self,data):
+    
+    #根据规则的订阅者发送相应消息
+    def push_alarm(self,data,follower_list):
+        if follower_list is None:
+            #如果为空则默认发送我的微信
+            self.push_wechat(data)
+        else:
+            to_mail_addr = []
+            for fol in follower_list:
+                #发送邮箱
+                if '@' in fol:
+                    to_mail_addr.append(fol)
+                elif fol.lower().startswith('scu'):
+                    #server chan
+                    self.push_wechat(data,fol)
+                elif fol == 'me':
+                    self.push_wechat(data)
+            if len(to_mail_addr) !=0:
+                self.send_mail(data,to_mail_addr)
+                
+    def push_wechat(self,data,sock='me'):
         h5Link = "https://g.alicdn.com/idleFish-F2e/app-basic/item.html?itemid=%s&ut_sk=1.VysuoiF98NADAC0Hjidchivd_21407387_1514271709212.Weixin.detail.563120851452.3402573859"%data['itemid']
         infoStr = '''# %s \n\r
-[H5链接](%s) \n\r 
-%s \n\r 
+长按以下链接，复制，打开 \n\r %s \n\r 
+[PC打开](%s) \n\r 
 [跳转到咸鱼打开](%s) \n\r
 %s 
 Keywords:%s 
 \n\r ![logo](%s)'''%(data['desc'],data['h5_link'],data['link'],h5Link,data['address'],data['keywords'],data['img_src'])
-        url = 'https://sc.ftqq.com/%s.send' % self.sock
-        payload = {'text' : '%s' % (str(data['price'])+"元I"+data['title']),'desp':infoStr}
-        requests.post(url,data=payload,verify=False)
+        title = '%s' % (str(data['price'])+"元I"+data['title'])
+        Util.push_wechat(title,infoStr,sock) 
 
     def send_mail(self,data,follower):
-        smtp_server = 'smtp.163.com'
-        username = 'molv_reporter@163.com'
-        password = ''
-        to_addr = follower
         #文件正文
         h5Link = "https://g.alicdn.com/idleFish-F2e/app-basic/item.html?itemid=%s&ut_sk=1.VysuoiF98NADAC0Hjidchivd_21407387_1514271709212.Weixin.detail.563120851452.3402573859"%data['itemid']
-        dataStr  = ''' <br><h1>%s</h1> 
+        dataStr  = ''' <br><h1> <a href="%s">%s </a></h1> 
         <br><h3>%s</h3> 
         <br><h4> ￥ %s  出售于%s </h4>
-        <br> 点击图片跳转闲鱼打开 <br>
+        <br><a href="%s"> 点击图片跳转闲鱼打开</a> <br>
         <a href="%s"><img src="%s"></a>
-        '''%(data['title'],data['desc'],data['price'],data['address'],h5Link,data['img_src'])
-        msg = MIMEText(dataStr, 'html', 'utf-8')
-        msg['From']=formataddr(['XY reporter',username])
-        msg['To']=formataddr(["Dear",to_addr])
-        msg['Subject'] = Header(str(data['price'])+" | "+data['title'], 'utf-8').encode()
-        server = smtplib.SMTP_SSL(smtp_server, 465)
-        server.login(username, password)
-        server.sendmail(username, [to_addr], msg.as_string())
-        server.quit()
+        '''%(data['h5_link'],data['title'],data['desc'],data['price'],data['address'],data['h5_link'],h5Link,data['img_src'])
+        title = str(data['price'])+" | "+data['title']
+        Util.send_mail(follower,title,dataStr);
 
 
     def is_data_existed(self,result):

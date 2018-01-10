@@ -121,7 +121,9 @@ order by keywords,ctime"""%(str(limitdays))
         #计算统计信息
         print "--------Stat----------"
         print "%12s\t%s\t%7s\t%s\t%s\t%s"%('日期','记录数','均价','最低价','最高价','众数')
-        for day,v in stat.items():
+        stats = stat.items()
+        stats.sort()
+        for day,v in stats:
             
             avg = v['sum'] / v['count']
             mode = self.getMode(v['prices'])
